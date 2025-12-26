@@ -1,0 +1,151 @@
+;
+; Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
+;
+; SPDX-License-Identifier: BSD-3-Clause
+;
+
+; SET pin 0 should be mapped to your LED GPIO
+
+.pio_version 0 // only requires PIO version 0
+
+.program Hsync
+pull block            ; pull 248
+.wrap_target
+    mov x, osr        ; move data into the x scratch register from the OSR
+    set pins, 1       ; set GPIO 16 high
+active:
+    jmp x-- active    ; decrement x
+
+    set x, 5          ; set x scratch register to 5
+    set pins, 1       ; set GPIO 16 high
+
+front:
+    jmp x-- front
+    
+    set pins, 0       ; set GPIO 16 low
+    set x, 31 [5]     ; delay for a total of 6 cycles
+sync:
+    jmp x-- sync      ; decrement x, GPIO 16 stays high for (1 + 6 + 31) = 38 cycles
+    
+    set pins, 1       ; set GPIO 16 high
+    set x, 16         ; set the scratch register to 16
+back:
+    jmp x-- back      ; decrement x
+    irq set 0         ; notify other state machine that the backporch has finished
+.wrap
+
+% c-sdk {
+static inline void Hsync_program_init(PIO pio, uint sm, uint offset, uint pin) {
+
+    // creates state machine configuration object c, sets
+    // to default configurations. I believe this function is auto-generated
+    // and gets a name of <program name>_program_get_default_config
+    // Yes, page 40 of SDK guide
+    pio_sm_config c = Hsync_program_get_default_config(offset);
+
+    // Map the state machine's SET and OUT pin group to three pins, the `pin`
+    // parameter to this function is the lowest one. These groups overlap.
+    sm_config_set_set_pins(&c, pin, 1);
+
+    // Set clock division
+     sm_config_set_clkdiv(&c, 20) ;
+
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+    pio_gpio_init(pio, pin);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+
+    pio_sm_put_blocking(pio, sm, 248); // Hsync
+}
+%}
+
+
+.program Vsync
+pull block
+.wrap_target
+    mov x, osr        ; put 479
+active:
+    wait 1 irq 0      ; wait for irq 0, clear if true
+    irq set 1         ; set irq 1 for the VGA SM
+    jmp x-- active
+
+    set y, 9
+front:
+    wait 1 irq 0
+    jmp y-- front
+
+    set pins, 0       ; set GPIO 17 to 0
+    wait 1 irq 0      ; wait once
+    wait 1 irq 0      ; wait once again (twice in total)
+
+    set x, 15         ; set the x scratch register to 16, probably should set it to 15 :3
+backporch:
+    wait 1 irq 0
+    set pins, 1
+    jmp x-- backporch ; because you know, yeah, 2(16) clock cycles..
+.wrap
+
+% c-sdk {
+static inline void Vsync_program_init(PIO pio, uint sm, uint offset, uint pin) {
+
+    // creates state machine configuration object c, sets
+    // to default configurations. I believe this function is auto-generated
+    // and gets a name of <program name>_program_get_default_config
+    // Yes, page 40 of SDK guide
+    pio_sm_config c = Vsync_program_get_default_config(offset);
+
+    // Map the state machine's SET and OUT pin group to three pins, the `pin`
+    // parameter to this function is the lowest one. These groups overlap.
+    sm_config_set_set_pins(&c, pin, 1);
+
+    // Set clock division
+     sm_config_set_clkdiv(&c, 20);
+
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+    pio_gpio_init(pio, pin);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+
+    pio_sm_put_blocking(pio, sm, 479); // Vsync
+}
+%}
+
+.program Synchronize
+.wrap_target
+    set pins, 0       ; keep pins at zero state
+    wait 1 irq 1      ; wait for IRQ 1
+    set pins, 1       ; if IRQ 1 has been called, set pin high and then set it low by looping back to "set pins, 0"
+.wrap
+
+% c-sdk {
+static inline void Synchronize_program_init(PIO pio, uint sm, uint offset, uint pin) {
+
+    // creates state machine configuration object c, sets
+    // to default configurations. I believe this function is auto-generated
+    // and gets a name of <program name>_program_get_default_config
+    // Yes, page 40 of SDK guide
+    pio_sm_config c = Synchronize_program_get_default_config(offset);
+
+    // Map the state machine's SET and OUT pin group to three pins, the `pin`
+    // parameter to this function is the lowest one. These groups overlap.
+    sm_config_set_set_pins(&c, pin, 1);
+
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+    pio_gpio_init(pio, pin);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+
+    pio_sm_put_blocking(pio, sm, 479); // Vsync
+}
+%}
+
+
+; perhaps it it possible to "reset" the pin to zero after PIO 2 has received it? But pin number 18 or whatever isn't mapped in the RGB SMs...
+; I mean, it *is* being synchronized due to the fact that all I need to do is toggle a certain pin high if an IRQ has been called. "Set pins, 0" just keeps it
+; at a state where it won't falsely trigger the colour_out: thing

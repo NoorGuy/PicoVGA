@@ -1,0 +1,66 @@
+.program rgb1
+    pull block         ; pull some data (that has been pushed before enabling of SM)
+    mov y, osr         ; move it to y scratch register
+.wrap_target
+
+    set pins, 0        ; set pin low for blacking out the display
+    mov x, y           ; move the value of y into x
+
+    wait 1 gpio 18     ; wait for a GPIO to go high (wait y gpio x, where y is the desired value and x is the GPIO)
+colorout:
+	pull block	       ; Pull color value
+	out pins, 16 [6]   ; Push out to pin
+    jmp x-- colorout   ; decrement the x scratch register
+.wrap
+
+% c-sdk {
+static inline void rgb1_program_init(PIO pio, uint sm, uint offset, uint pin) {
+
+    // creates state machine configuration object c, sets
+    // to default configurations. I believe this function is auto-generated
+    // and gets a name of <program name>_program_get_default_config
+    // Yes, page 40 of SDK guide
+    pio_sm_config c = rgb1_program_get_default_config(offset);
+
+    // Map the state machine's SET and OUT pin group to three pins, the `pin`
+    // parameter to this function is the lowest one. These groups overlap.
+    sm_config_set_set_pins(&c, pin, 5);
+    sm_config_set_out_pins(&c, pin, 16);
+    sm_config_set_out_shift(&c, true, true, 16); // new
+
+    // Set clock division (Commented out, this one runs at full speed)
+    //sm_config_set_clkdiv(&c, 2) ;
+
+    // longer FIFO to avoid bursty data
+    sm_config_set_fifo_join (&c, PIO_FIFO_JOIN_TX) ;
+
+    // Set this pin's GPIO function (connect PIO to the pad)
+    pio_gpio_init(pio, pin);
+    pio_gpio_init(pio, pin+1);
+    pio_gpio_init(pio, pin+2);
+    pio_gpio_init(pio, pin+3);
+    pio_gpio_init(pio, pin+4);
+    pio_gpio_init(pio, pin+5);
+    pio_gpio_init(pio, pin+6);
+    pio_gpio_init(pio, pin+7);
+    pio_gpio_init(pio, pin+8);
+    pio_gpio_init(pio, pin+9);
+    pio_gpio_init(pio, pin+10);
+    pio_gpio_init(pio, pin+11);
+    pio_gpio_init(pio, pin+12);
+    pio_gpio_init(pio, pin+13);
+    pio_gpio_init(pio, pin+14);
+    pio_gpio_init(pio, pin+15);
+
+    // Set the pin direction to output at the PIO (3 pins)
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 16, true);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+
+    pio_sm_put_blocking(pio, sm, 638); // SM1, Red (640 / 2 - 1) 526
+
+    // Set the state machine running (commented out, I'll start this in the C)
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
